@@ -91,6 +91,16 @@
             box-shadow: inset 0 2px 4px rgba(0,0,0,0.02); display: none;
         }
         
+        #reposition-btn {
+            position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%);
+            padding: 14px 28px; background: rgba(0, 122, 255, 0.9); color: white;
+            border: 2px solid rgba(255, 255, 255, 0.8); border-radius: 30px;
+            font-size: 15px; font-weight: bold; z-index: 150; display: none;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3); backdrop-filter: blur(5px);
+            cursor: pointer; -webkit-tap-highlight-color: transparent;
+        }
+        #reposition-btn:active { transform: translateX(-50%) scale(0.95); background: rgba(0, 86, 179, 0.9); }
+
         #canvas-container { width: 100vw; height: 100vh; position: absolute; top:0; left:0; z-index: 1; }
         #ar-loading { position: absolute; top:50%; left:50%; transform:translate(-50%,-50%); color:white; background:rgba(0,0,0,0.8); padding:15px; border-radius:10px; display:none; z-index:200; font-size:14px; }
     </style>
@@ -98,6 +108,7 @@
 <body>
 
 <div id="ar-loading">📷 AR空間の起動中...</div>
+<button id="reposition-btn" onclick="triggerReposition()">📍 ここに再配置</button>
 
 <div id="ui-panel">
     <div class="panel-header" onclick="togglePanel()">
@@ -161,6 +172,7 @@
     let xrHitTestSource = null;
     let xrRefSpace = null;
     let isManualDistanceMode = false;
+    let shouldReposition = false;
 
     function togglePanel() {
         const panel = document.getElementById('ui-panel');
@@ -179,6 +191,10 @@
             btn.innerText = "📍 配置モード: 自動（床検出）";
             btn.classList.add('active');
         }
+    }
+
+    function triggerReposition() {
+        shouldReposition = true;
     }
 
     function initStandard3D() {
@@ -403,6 +419,7 @@ def Xform "mannequin"
 
                 scene.background = null;
                 loading.style.display = 'none';
+                document.getElementById('reposition-btn').style.display = 'block';
                 togglePanel();
 
                 xrRefSpace = await session.requestReferenceSpace('local-floor');
@@ -416,10 +433,12 @@ def Xform "mannequin"
                     renderer.xr.enabled = false;
                     xrHitTestSource = null;
                     xrRefSpace = null;
+                    document.getElementById('reposition-btn').style.display = 'none';
                     scene.background = new THREE.Color(0xcccccc);
                 });
 
                 updateScene();
+                shouldReposition = true;
             } catch (e) {
                 console.error(e);
                 alert("ARの起動に失敗しました。WebXR対応ブラウザでご利用ください。");
@@ -560,29 +579,30 @@ def Xform "mannequin"
                 const hit = hitTestResults[0];
                 const pose = hit.getPose(xrRefSpace);
                 if (pose) {
-                    if (isManualDistanceMode) {
-                        // 距離指定モード：床の高さを維持しつつスライダーで指定した距離に配置
-                        const floorY = pose.transform.position.y;
-                        const camDir = new THREE.Vector3();
-                        camera.getWorldDirection(camDir);
-                        camDir.y = 0;
-                        camDir.normalize();
+                    if (shouldReposition || !isManualDistanceMode) {
+                        if (isManualDistanceMode) {
+                            const floorY = pose.transform.position.y;
+                            const camDir = new THREE.Vector3();
+                            camera.getWorldDirection(camDir);
+                            camDir.y = 0;
+                            camDir.normalize();
 
-                        const camPos = new THREE.Vector3();
-                        camera.getWorldPosition(camPos);
+                            const camPos = new THREE.Vector3();
+                            camera.getWorldPosition(camPos);
 
-                        mannequinGroup.position.set(
-                            camPos.x + camDir.x * dVal,
-                            floorY,
-                            camPos.z + camDir.z * dVal
-                        );
-                    } else {
-                        // 自動モード：ヒットテストで直接検知した床の位置に自動配置
-                        mannequinGroup.position.set(
-                            pose.transform.position.x,
-                            pose.transform.position.y,
-                            pose.transform.position.z
-                        );
+                            mannequinGroup.position.set(
+                                camPos.x + camDir.x * dVal,
+                                floorY,
+                                camPos.z + camDir.z * dVal
+                            );
+                        } else {
+                            mannequinGroup.position.set(
+                                pose.transform.position.x,
+                                pose.transform.position.y,
+                                pose.transform.position.z
+                            );
+                        }
+                        shouldReposition = false;
                     }
                 }
             }
