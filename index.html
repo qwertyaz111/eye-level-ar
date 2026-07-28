@@ -40,15 +40,6 @@
         input, select { padding: 8px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; background: white; color: #333; width: 100%; box-sizing: border-box; }
         .color-picker { width: 100%; height: 38px; border: 2px solid #999; border-radius: 4px; cursor: pointer; padding: 0; background: none; appearance: none; -webkit-appearance: none; }
         
-        .mode-toggle-btn {
-            width: 100%; padding: 8px; background: #e0e0e0; color: #333; border: 1px solid #ccc;
-            border-radius: 8px; font-weight: bold; font-size: 11px; cursor: pointer; margin-bottom: 8px;
-            transition: 0.2s;
-        }
-        .mode-toggle-btn.active {
-            background: #e6f2ff; color: #007aff; border-color: #007aff;
-        }
-
         .ar-btn { width: 100%; padding: 12px; background: #007aff; color: white; border: none; border-radius: 25px; font-weight: bold; cursor: pointer; transition: 0.2s; font-size: 14px; -webkit-tap-highlight-color: transparent; margin-bottom: 10px; }
         .ar-btn:active { background: #0056b3; transform: scale(0.98); }
 
@@ -91,16 +82,6 @@
             box-shadow: inset 0 2px 4px rgba(0,0,0,0.02); display: none;
         }
         
-        #reposition-btn {
-            position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%);
-            padding: 14px 28px; background: rgba(0, 122, 255, 0.9); color: white;
-            border: 2px solid rgba(255, 255, 255, 0.8); border-radius: 30px;
-            font-size: 15px; font-weight: bold; z-index: 150; display: none;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.3); backdrop-filter: blur(5px);
-            cursor: pointer; -webkit-tap-highlight-color: transparent;
-        }
-        #reposition-btn:active { transform: translateX(-50%) scale(0.95); background: rgba(0, 86, 179, 0.9); }
-
         #canvas-container { width: 100vw; height: 100vh; position: absolute; top:0; left:0; z-index: 1; }
         #ar-loading { position: absolute; top:50%; left:50%; transform:translate(-50%,-50%); color:white; background:rgba(0,0,0,0.8); padding:15px; border-radius:10px; display:none; z-index:200; font-size:14px; }
     </style>
@@ -108,7 +89,6 @@
 <body>
 
 <div id="ar-loading">📷 AR空間の起動中...</div>
-<button id="reposition-btn" onclick="triggerReposition()">📍 ここに再配置</button>
 
 <div id="ui-panel">
     <div class="panel-header" onclick="togglePanel()">
@@ -136,11 +116,6 @@
         </div>
 
         <div style="padding: 0 5px;">
-            <button id="mode-btn" class="mode-toggle-btn active" onclick="toggleArMode()">📍 配置モード: 自動（床検出）</button>
-            <div class="input-item" style="margin-bottom:10px;">
-                <span class="hint">出現位置の調整（距離）: <span id="dist-display" style="color:#333; font-weight:bold;">1.0m</span></span>
-                <input type="range" id="distance" min="30" max="300" value="100" oninput="updateScene()">
-            </div>
             <button class="ar-btn" onclick="startAR()">📷 AR機能を起動する</button>
         </div>
         
@@ -168,33 +143,16 @@
 <div id="canvas-container"></div>
 
 <script>
-    let scene, camera, renderer, mannequinGroup;
+    let scene, camera, renderer, mannequinGroup, reticle;
     let xrHitTestSource = null;
     let xrRefSpace = null;
-    let isManualDistanceMode = false;
-    let shouldReposition = false;
+    let lastHitPose = null; // 最新のレイキャスト位置を保持
 
     function togglePanel() {
         const panel = document.getElementById('ui-panel');
         const text = document.getElementById('toggle-text');
         panel.classList.toggle('collapsed');
         text.innerText = panel.classList.contains('collapsed') ? '開く' : '閉じる';
-    }
-
-    function toggleArMode() {
-        isManualDistanceMode = !isManualDistanceMode;
-        const btn = document.getElementById('mode-btn');
-        if (isManualDistanceMode) {
-            btn.innerText = "📏 配置モード: 距離指定（スライダー優先）";
-            btn.classList.remove('active');
-        } else {
-            btn.innerText = "📍 配置モード: 自動（床検出）";
-            btn.classList.add('active');
-        }
-    }
-
-    function triggerReposition() {
-        shouldReposition = true;
     }
 
     function initStandard3D() {
@@ -213,6 +171,14 @@
 
         const light = new THREE.HemisphereLight(0xffffff, 0xbbbbbb, 1.5);
         scene.add(light);
+
+        // 床検出位置を示すリングマーカー（レティクル）
+        const reticleGeo = new THREE.RingGeometry(0.15, 0.2, 32).rotateX(-Math.PI / 2);
+        const reticleMat = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide });
+        reticle = new THREE.Mesh(reticleGeo, reticleMat);
+        reticle.matrixAutoUpdate = false;
+        reticle.visible = false;
+        scene.add(reticle);
 
         mannequinGroup = new THREE.Group();
         scene.add(mannequinGroup);
@@ -419,7 +385,6 @@ def Xform "mannequin"
 
                 scene.background = null;
                 loading.style.display = 'none';
-                document.getElementById('reposition-btn').style.display = 'block';
                 togglePanel();
 
                 xrRefSpace = await session.requestReferenceSpace('local-floor');
@@ -429,16 +394,19 @@ def Xform "mannequin"
                     xrHitTestSource = await session.requestHitTestSource({ space: viewerSpace });
                 }
 
+                // 画面タップイベントの設定
+                session.addEventListener('select', onSelect);
+
                 session.addEventListener('end', () => {
                     renderer.xr.enabled = false;
                     xrHitTestSource = null;
                     xrRefSpace = null;
-                    document.getElementById('reposition-btn').style.display = 'none';
+                    lastHitPose = null;
+                    reticle.visible = false;
                     scene.background = new THREE.Color(0xcccccc);
                 });
 
                 updateScene();
-                shouldReposition = true;
             } catch (e) {
                 console.error(e);
                 alert("ARの起動に失敗しました。WebXR対応ブラウザでご利用ください。");
@@ -446,6 +414,17 @@ def Xform "mannequin"
             }
         } else {
             alert("お使いのデバイス/ブラウザは空間配置AR（WebXR）に対応していません。iOSの場合はSafariより標準起動してください。");
+        }
+    }
+
+    function onSelect() {
+        // 認識された床がある場所にタップで配置移動
+        if (reticle.visible && lastHitPose) {
+            mannequinGroup.position.set(
+                lastHitPose.transform.position.x,
+                lastHitPose.transform.position.y,
+                lastHitPose.transform.position.z
+            );
         }
     }
 
@@ -470,9 +449,6 @@ def Xform "mannequin"
         const hB = parseFloat(document.getElementById('heightB').value) || 171.5;
         const gB = document.getElementById('genderB').value;
         const cB = document.getElementById('colorB').value;
-        const dVal = parseInt(document.getElementById('distance').value);
-
-        document.getElementById('dist-display').innerText = (dVal / 100).toFixed(1) + "m";
 
         while(mannequinGroup.children.length > 0) {
             const child = mannequinGroup.children[0];
@@ -549,7 +525,7 @@ def Xform "mannequin"
         mannequinGroup.add(nameLabel);
 
         if (!renderer || !renderer.xr.enabled) {
-            mannequinGroup.position.set(0, 0, -dVal * 0.01);
+            mannequinGroup.position.set(0, 0, -1.0);
         }
     }
 
@@ -571,40 +547,18 @@ def Xform "mannequin"
     }
 
     function animate(timestamp, frame) {
-        const dVal = parseInt(document.getElementById('distance').value) * 0.01;
-
         if (frame && xrHitTestSource && xrRefSpace) {
             const hitTestResults = frame.getHitTestResults(xrHitTestSource);
             if (hitTestResults.length > 0) {
                 const hit = hitTestResults[0];
                 const pose = hit.getPose(xrRefSpace);
                 if (pose) {
-                    if (shouldReposition || !isManualDistanceMode) {
-                        if (isManualDistanceMode) {
-                            const floorY = pose.transform.position.y;
-                            const camDir = new THREE.Vector3();
-                            camera.getWorldDirection(camDir);
-                            camDir.y = 0;
-                            camDir.normalize();
-
-                            const camPos = new THREE.Vector3();
-                            camera.getWorldPosition(camPos);
-
-                            mannequinGroup.position.set(
-                                camPos.x + camDir.x * dVal,
-                                floorY,
-                                camPos.z + camDir.z * dVal
-                            );
-                        } else {
-                            mannequinGroup.position.set(
-                                pose.transform.position.x,
-                                pose.transform.position.y,
-                                pose.transform.position.z
-                            );
-                        }
-                        shouldReposition = false;
-                    }
+                    lastHitPose = pose;
+                    reticle.visible = true;
+                    reticle.matrix.fromArray(pose.transform.matrix);
                 }
+            } else {
+                reticle.visible = false;
             }
         }
 
@@ -628,5 +582,4 @@ def Xform "mannequin"
     };
 </script>
 </body>
-</html>
 </html>
