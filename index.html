@@ -40,6 +40,15 @@
         input, select { padding: 8px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; background: white; color: #333; width: 100%; box-sizing: border-box; }
         .color-picker { width: 100%; height: 38px; border: 2px solid #999; border-radius: 4px; cursor: pointer; padding: 0; background: none; appearance: none; -webkit-appearance: none; }
         
+        .mode-toggle-btn {
+            width: 100%; padding: 8px; background: #e0e0e0; color: #333; border: 1px solid #ccc;
+            border-radius: 8px; font-weight: bold; font-size: 11px; cursor: pointer; margin-bottom: 8px;
+            transition: 0.2s;
+        }
+        .mode-toggle-btn.active {
+            background: #e6f2ff; color: #007aff; border-color: #007aff;
+        }
+
         .ar-btn { width: 100%; padding: 12px; background: #007aff; color: white; border: none; border-radius: 25px; font-weight: bold; cursor: pointer; transition: 0.2s; font-size: 14px; -webkit-tap-highlight-color: transparent; margin-bottom: 10px; }
         .ar-btn:active { background: #0056b3; transform: scale(0.98); }
 
@@ -116,6 +125,7 @@
         </div>
 
         <div style="padding: 0 5px;">
+            <button id="mode-btn" class="mode-toggle-btn active" onclick="toggleArMode()">📍 配置モード: 自動（床検出）</button>
             <div class="input-item" style="margin-bottom:10px;">
                 <span class="hint">出現位置の調整（距離）: <span id="dist-display" style="color:#333; font-weight:bold;">1.0m</span></span>
                 <input type="range" id="distance" min="30" max="300" value="100" oninput="updateScene()">
@@ -148,12 +158,27 @@
 
 <script>
     let scene, camera, renderer, mannequinGroup;
+    let xrHitTestSource = null;
+    let xrRefSpace = null;
+    let isManualDistanceMode = false;
 
     function togglePanel() {
         const panel = document.getElementById('ui-panel');
         const text = document.getElementById('toggle-text');
         panel.classList.toggle('collapsed');
         text.innerText = panel.classList.contains('collapsed') ? '開く' : '閉じる';
+    }
+
+    function toggleArMode() {
+        isManualDistanceMode = !isManualDistanceMode;
+        const btn = document.getElementById('mode-btn');
+        if (isManualDistanceMode) {
+            btn.innerText = "📏 配置モード: 距離指定（スライダー優先）";
+            btn.classList.remove('active');
+        } else {
+            btn.innerText = "📍 配置モード: 自動（床検出）";
+            btn.classList.add('active');
+        }
     }
 
     function initStandard3D() {
@@ -215,7 +240,6 @@
         cdDv.setUint32(16, crc, true);
         cdDv.setUint32(20, size, true);
         cdDv.setUint32(24, size, true);
-        cdDv.setUint16(28, nameLen, true);
         cdHeader.set(nameData, 46);
 
         const eocd = new Uint8Array(22);
@@ -370,7 +394,8 @@ def Xform "mannequin"
 
             try {
                 const session = await navigator.xr.requestSession('immersive-ar', {
-                    requiredFeatures: ['local-floor']
+                    requiredFeatures: ['local-floor'],
+                    optionalFeatures: ['hit-test']
                 });
 
                 renderer.xr.enabled = true;
@@ -380,8 +405,17 @@ def Xform "mannequin"
                 loading.style.display = 'none';
                 togglePanel();
 
+                xrRefSpace = await session.requestReferenceSpace('local-floor');
+                
+                if (session.requestHitTestSource) {
+                    const viewerSpace = await session.requestReferenceSpace('viewer');
+                    xrHitTestSource = await session.requestHitTestSource({ space: viewerSpace });
+                }
+
                 session.addEventListener('end', () => {
                     renderer.xr.enabled = false;
+                    xrHitTestSource = null;
+                    xrRefSpace = null;
                     scene.background = new THREE.Color(0xcccccc);
                 });
 
@@ -495,7 +529,9 @@ def Xform "mannequin"
         nameLabel.position.set(0, h + 0.2, 0);
         mannequinGroup.add(nameLabel);
 
-        mannequinGroup.position.set(0, 0, -dVal * 0.01);
+        if (!renderer || !renderer.xr.enabled) {
+            mannequinGroup.position.set(0, 0, -dVal * 0.01);
+        }
     }
 
     function shareToX() {
@@ -515,7 +551,43 @@ def Xform "mannequin"
         renderer.setSize(window.innerWidth, window.innerHeight);
     }
 
-    function animate() {
+    function animate(timestamp, frame) {
+        const dVal = parseInt(document.getElementById('distance').value) * 0.01;
+
+        if (frame && xrHitTestSource && xrRefSpace) {
+            const hitTestResults = frame.getHitTestResults(xrHitTestSource);
+            if (hitTestResults.length > 0) {
+                const hit = hitTestResults[0];
+                const pose = hit.getPose(xrRefSpace);
+                if (pose) {
+                    if (isManualDistanceMode) {
+                        // 距離指定モード：床の高さを維持しつつスライダーで指定した距離に配置
+                        const floorY = pose.transform.position.y;
+                        const camDir = new THREE.Vector3();
+                        camera.getWorldDirection(camDir);
+                        camDir.y = 0;
+                        camDir.normalize();
+
+                        const camPos = new THREE.Vector3();
+                        camera.getWorldPosition(camPos);
+
+                        mannequinGroup.position.set(
+                            camPos.x + camDir.x * dVal,
+                            floorY,
+                            camPos.z + camDir.z * dVal
+                        );
+                    } else {
+                        // 自動モード：ヒットテストで直接検知した床の位置に自動配置
+                        mannequinGroup.position.set(
+                            pose.transform.position.x,
+                            pose.transform.position.y,
+                            pose.transform.position.z
+                        );
+                    }
+                }
+            }
+        }
+
         if (mannequinGroup && camera) {
             mannequinGroup.children.forEach(child => {
                 if(child instanceof THREE.Sprite) {
@@ -536,4 +608,5 @@ def Xform "mannequin"
     };
 </script>
 </body>
+</html>
 </html>
