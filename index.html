@@ -245,18 +245,21 @@
             const b = parseInt(cB.slice(5,7), 16) / 255;
             
             const h = hB * 0.01;
-            const headH = h * 0.13;
-            const neckH = h * 0.05;
-            const torsoH = h * 0.37;
-            const legH = h * 0.45;
-            const torsoW = (gB === 'male' ? 0.26 : 0.21) * (h / 1.7);
+            const headH_raw = h * 0.13;
+            const scaleH = h * (h / (h + 0.3 * headH_raw));
+
+            const headH = scaleH * 0.13;
+            const neckH = scaleH * 0.05;
+            const torsoH = scaleH * 0.37;
+            const legH = scaleH * 0.45;
+            const torsoW = (gB === 'male' ? 0.26 : 0.21) * (scaleH / 1.7);
             const neckW = headH * 0.3;
             const legW = torsoW * 0.4;
             const armW = torsoW * 0.3;
-            const armH = h * 0.38;
+            const armH = scaleH * 0.38;
             
             const targetEyeRatio = (gB === 'male') ? 0.904 : 0.903;
-            const targetEyeY = h * targetEyeRatio;
+            const targetEyeY = scaleH * targetEyeRatio;
             const eyeSize = headH * 0.12;
 
             const usdaContent = `#usda 1.0
@@ -279,7 +282,7 @@ def Xform "mannequin"
         uniform token axis = "Y"
         double radius = ${neckW}
         double height = ${neckH}
-        double3 xformOp:translate = (0, ${h - headH - (neckH * 0.5)}, 0)
+        double3 xformOp:translate = (0, ${scaleH - headH - (neckH * 0.5)}, 0)
         uniform token[] xformOpOrder = ["xformOp:translate"]
         color3f[] primvars:displayColor = [(${r}, ${g}, ${b})]
     }
@@ -291,7 +294,7 @@ def Xform "mannequin"
         def Sphere "head"
         {
             double radius = ${headH * 0.8}
-            double3 xformOp:translate = (0, ${(h - headH * 0.5) - targetEyeY}, 0)
+            double3 xformOp:translate = (0, ${(scaleH - headH * 0.5) - targetEyeY}, 0)
             uniform token[] xformOpOrder = ["xformOp:translate"]
             color3f[] primvars:displayColor = [(${r}, ${g}, ${b})]
         }
@@ -458,16 +461,19 @@ def Xform "mannequin"
         }
 
         const h = hB * 0.01;
+        const headH_raw = h * 0.13;
+        const scaleH = h * (h / (h + 0.3 * headH_raw));
+
         const bodyMat = new THREE.MeshPhongMaterial({ color: cB, transparent: true, opacity: 0.85 });
         const eyeMat = new THREE.MeshBasicMaterial({ color: 0x222222 });
 
-        const headH = h * 0.13;
-        const neckH = h * 0.05;
-        const torsoH = h * 0.37;
-        const legH = h * 0.45;
+        const headH = scaleH * 0.13;
+        const neckH = scaleH * 0.05;
+        const torsoH = scaleH * 0.37;
+        const legH = scaleH * 0.45;
         
         const targetEyeRatio = (gB === 'male') ? 0.904 : 0.903;
-        const targetEyeY = h * targetEyeRatio;
+        const targetEyeY = scaleH * targetEyeRatio;
 
         const headGroup = new THREE.Group();
         headGroup.name = "headGroup";
@@ -476,7 +482,7 @@ def Xform "mannequin"
 
         const headGeo = new THREE.SphereGeometry(headH * 0.8, 16, 16);
         const head = new THREE.Mesh(headGeo, bodyMat);
-        head.position.set(0, (h - headH * 0.5) - targetEyeY, 0);
+        head.position.set(0, (scaleH - headH * 0.5) - targetEyeY, 0);
         headGroup.add(head);
 
         const eyeSize = headH * 0.12;
@@ -489,10 +495,10 @@ def Xform "mannequin"
         const neckW = headH * 0.3;
         const neckGeo = new THREE.CylinderGeometry(neckW, neckW, neckH, 16);
         const neck = new THREE.Mesh(neckGeo, bodyMat);
-        neck.position.y = h - headH - (neckH * 0.5);
+        neck.position.y = scaleH - headH - (neckH * 0.5);
         mannequinGroup.add(neck);
 
-        const torsoW = (gB === 'male' ? 0.26 : 0.21) * (h/1.7);
+        const torsoW = (gB === 'male' ? 0.26 : 0.21) * (scaleH / 1.7);
         const torsoGeo = new THREE.BoxGeometry(torsoW, torsoH, torsoW * 0.5);
         const torso = new THREE.Mesh(torsoGeo, bodyMat);
         torso.position.y = legH + (torsoH * 0.5);
@@ -507,7 +513,7 @@ def Xform "mannequin"
         });
 
         const armW = torsoW * 0.3;
-        const armH = h * 0.38;
+        const armH = scaleH * 0.38;
         const armGeo = new THREE.BoxGeometry(armW, armH, armW);
         [-1, 1].forEach(side => {
             const armAnchor = new THREE.Group();
